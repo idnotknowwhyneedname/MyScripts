@@ -4,32 +4,34 @@ amdc脚本
 ***********************************************/
 /**
  * 修复版闲鱼/阿里系去广告脚本
- * 作用：绕过图片和正常业务，仅拦截包含 splash (开屏) 或 ad (广告) 的请求
+ * 作用：绕过图片和正常业务，仅拦截包含 splash (开屏) 或 ad (广告) 的/**
+ * 合并版：AMDC 调度 + 闲鱼去广告
  */
-/**
-/**
- * 闲鱼精简版 - 兼顾速度与去广告
- */
+
 const url = $request.url;
 
-// 1. 严格拦截：这些接口全是广告或多余的动态卡片
-const blockList = [
-    "splash.ads",                // 开屏广告
-    "idle.ad.expose",            // 广告曝光记录
-    "idle.user.strategy.list",   // 用户引导策略
-    "idlehome.home.circle.list", // 首页闲鱼币/圈子引导
-    "idlemtopsearch.search.shade", // 搜索框遮罩广告
-    "idle.item.recommend"        // 推荐流里的推广位
-];
-
-// 检查 URL 是否包含黑名单中的关键词
-const shouldBlock = blockList.some(keyword => url.includes(keyword));
-
-if (shouldBlock) {
-    // 发现干扰项，直接拦截
-    $done({ status: "HTTP/1.1 200 OK", body: "{}" });
-} else {
-    // 正常业务和图片，放行
+// --- 1. 闲鱼去广告逻辑 ---
+if (url.includes("goofish.com")) {
+    const blockList = [
+        "splash.ads",
+        "idle.ad.expose",
+        "idle.user.strategy.list",
+        "idlehome.home.circle.list",
+        "idlemtopsearch.search.shade",
+        "idle.item.recommend"
+    ];
+    if (blockList.some(keyword => url.includes(keyword))) {
+        $done({ status: "HTTP/1.1 200 OK", body: "{}" });
+    } else {
+        $done({});
+    }
+} 
+// --- 2. 你的原始 AMDC 逻辑 ---
+else if (url.includes("amdc.m.taobao.com")) {
+    // 这里放你原本 amdc.js 里的代码内容
+    // ... 原有代码 ...
+} 
+// --- 3. 兜底放行 ---
+else {
     $done({});
 }
-
