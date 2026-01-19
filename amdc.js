@@ -3,50 +3,45 @@ amdc脚本
 
 ***********************************************/
 /**
- * 修复版闲鱼/阿里系去广告脚本
- * 作用：绕过图片和正常业务，仅拦截包含 splash (开屏) 或 ad (广告) 的/**
- * 合并版：AMDC 调度 + 闲鱼去广告
- /**
-/**
- * 閒魚去廣告最終版 - 兼顧速度與穩定性
+ * 闲鱼 (Goofish) 综合去广告 & 协议降级脚本
+ * 作用：拦截广告、闲鱼币、策略流，并强制降级 AMDC 调度至 HTTPS (解决卡顿)
  */
+
 const url = $request.url;
 
-// 1. 判斷是否為閒魚數據接口
-if (url.includes("goofish.com/gw/mtop")) {
-    // 嚴格攔截清單：廣告、閒魚幣、推薦流、搜索遮罩
-    const blockList = [
-        "splash.ads",                // 開屏廣告
-        "idle.ad.expose",            // 廣告曝光
-        "idle.user.strategy.list",   // 用戶策略
-        "idlehome.home.circle.list", // 閒魚幣/圈子
-        "idlemtopsearch.search.shade", // 搜索框廣告
-        "idlemtopsearch.item.search.activate", // 紅包彈窗
-        "idle.item.recommend",       // 推薦流推廣
-        "idle.user.page.my.adapter"  // 我的頁面廣告
-    ];
-
-    if (blockList.some(keyword => url.includes(keyword))) {
-        // 攔截並返回空 JSON
-        $done({ status: "HTTP/1.1 200 OK", body: "{}" });
-    } else {
-        // 正常商品數據放行
-        $done({});
-    }
-} 
-// 2. 處理 AMDC 降級 (確保廣告不走 QUIC 漏洞)
-else if (url.includes("amdc.m.taobao.com")) {
-    let body = $response.body;
-    if (body) {
-        body = body.replace(/\"http3\":\s*\"true\"/g, '\"http3\":\"false\"');
-        body = body.replace(/\"h3\":\s*\"true\"/g, '\"h3\":\"false\"');
-        body = body.replace(/\"quic\":\s*\"true\"/g, '\"quic\":\"false\"');
+// 1. 处理 AMDC 调度 (防止走加密的 QUIC 协议)
+if (url.includes("amdc.m.taobao.com")) {
+    if (typeof $response !== "undefined" && $response.body) {
+        let body = $response.body;
+        // 强制将 http3, h3, quic 的开启标志改为 false
+        body = body.replace(/\"(http3|h3|quic)\":\s*\"true\"/g, '\"$1\":\"false\"');
         $done({ body });
     } else {
         $done({});
     }
-}
-// 3. 其他所有請求（含圖片）原路放行
+} 
+// 2. 拦截闲鱼广告与冗余接口
+else if (url.includes("goofish.com/gw/mtop")) {
+    const blockList = [
+        "splash.ads",                // 开屏广告
+        "idle.ad.expose",            // 广告曝光埋点
+        "idle.user.strategy.list",   // 用户行为策略
+        "idlehome.home.circle.list", // 闲鱼币/鱼塘圈子
+        "idlemtopsearch.search.shade", // 搜索框阴影/热搜词
+        "idlemtopsearch.item.search.activate", // 红包弹窗
+        "idle.item.recommend",       // 推荐流推广
+        "idle.user.page.my.adapter", // 我的页面冗余模块
+        "idle.local.home"            // 附近频道的广告流
+    ];
+
+    if (blockList.some(keyword => url.includes(keyword))) {
+        // 直接返回 HTTP 200 和空 JSON，不请求服务器，提升速度
+        $done({ response: { status: 200, body: "{}" } });
+    } else {
+        $done({});
+    }
+} 
+// 3. 其他请求放行
 else {
     $done({});
 }
