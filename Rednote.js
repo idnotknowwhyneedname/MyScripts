@@ -1,85 +1,69 @@
 /*
-小紅書終極隱私淨化版
-1. 斬斷所有追蹤：猜你想搜、熱搜、Banner、廣告、直播
-2. 視覺深度去垢：移除側邊欄、錢包、創作助手、跳過開屏
-3. 核心功能保留：全量開啟無水印保存權限
+小红书终极隐私净化版 - 17PM 专供
+- 彻底封杀：AI 提问、有问必答、后台日志上报、热搜、Banner
+- 深度净化：移除 AB 测试、审计追踪、所有非浏览功能
+- 核心保留：无水印下载权限
 */
 
 const url = $request.url;
 if (!$response.body) $done({});
 let obj = JSON.parse($response.body);
 
-// --- 1. 搜索深度淨化 (斬斷“猜你想搜”、熱搜、搜索建議) ---
-if (url.includes("/search/hot_list") || url.includes("/search/trending") || url.includes("/v4/search/hint") || url.includes("/search/banner_list")) {
-    obj.data = {
-        items: [],
-        history: [],
-        hot_queries: [],
-        hint_words: [],
-        queries: [],
-        scene: ""
-    };
+// --- 1. 拦截日志上报与实验配置 (防止偷偷上传行为数据) ---
+if (url.includes("/system_service/config") || url.includes("/v2/system_service/widgets") || url.includes("/interaction/config")) {
+    const trash = [
+        "app_theme", "loading_img", "splash", "store", "sideConfigHomepage", 
+        "sideConfigPersonalPage", "widgets_nbb", "widgets_ncb", "daily_checkin", 
+        "revenue_center", "ai_helper_config", "search_ai_entry", "audit_info",
+        "event_logging", "ab_test_config", "apm_config"
+    ];
+    if (obj.data) {
+        trash.forEach(k => delete obj.data[k]);
+        if (obj.data.sideConfigHomepage) obj.data.sideConfigHomepage = [];
+        if (obj.data.sideConfigPersonalPage) obj.data.sideConfigPersonalPage = [];
+    }
 }
 
-// --- 2. 筆記流淨化 (開啟無水印 + 移除廣告標籤) ---
+// --- 2. 搜索页深度净化 (杀掉：AI 提问、热搜、发现、干预) ---
+else if (url.includes("/search/hot_list") || url.includes("/search/trending") || url.includes("/v4/search/hint") || url.includes("/search/banner_list") || url.includes("/v1/search/intervene")) {
+    obj.data = {
+        items: [], history: [], hot_queries: [], hint_words: [], queries: [],
+        ai_search_info: {}, search_intervene: {}, floating_button: {}, banner_list: []
+    };
+    if (url.includes("/search/banner_list")) obj.data = {};
+}
+
+// --- 3. 笔记流：解锁无水印 + 彻底切断广告/追踪 ---
 else if (url.includes("/note/feed") || url.includes("/note/imagefeed") || url.includes("/note/videofeed")) {
     const items = obj.data?.[0]?.note_list || obj.data || [];
     items.forEach(item => {
         if (!item || typeof item !== 'object') return;
-        
-        // 【核心】解鎖無水印保存權限
+        // 开启最高质量无水印保存
         if (item.media_save_config) {
-            item.media_save_config = { 
-                disable_save: false, 
-                disable_watermark: true, 
-                disable_weibo_cover: true 
-            };
+            item.media_save_config = { disable_save: false, disable_watermark: true, disable_weibo_cover: true };
         }
-        
-        // 隱私增強：移除筆記關聯的商業追蹤
+        // 物理删除所有广告和追踪字段
         delete item.ads_info;
         delete item.common_ad_info;
         delete item.related_goods_info;
         delete item.is_ads;
-        if (item.share_info?.function_entries) {
-            // 確保「下載」按鈕出現在分享菜單第一位
-            let entries = item.share_info.function_entries;
-            let idx = entries.findIndex(e => e.type === "video_download");
-            if (idx !== -1) entries.unshift(entries.splice(idx, 1)[0]);
-        }
+        delete item.track_id; // 删除追踪 ID
     });
 }
 
-// --- 3. 首頁信息流 (過濾直播、廣告、算法推薦理由) ---
+// --- 4. 信息流去广告与算法屏蔽 ---
 else if (url.includes("/homefeed") || url.includes("/search/notes")) {
     if (obj.data?.items) {
         obj.data.items = obj.data.items.filter(i => {
             const isAd = i.ads_info || i.is_ads || i.card_icon || i.model_type === "live_v2" || i.note_attributes?.includes("goods");
-            // 隱私邏輯：除了好友動態，移除所有算法給出的「推薦理由」
+            // 屏蔽强行推荐，只保留纯粹的内容
             if (i.recommend_reason && i.recommend_reason !== "friend_post") i.recommend_reason = "";
             return !isAd;
         });
     }
 }
 
-// --- 4. 界面功能大閹割 (殺掉錢包、側邊欄、所有商業插件) ---
-else if (url.includes("/system_service/config") || url.includes("/v2/system_service/widgets") || url.includes("/interaction/config")) {
-    if (obj.data) {
-        const killList = [
-            "app_theme", "loading_img", "splash", "store", 
-            "sideConfigHomepage", "sideConfigPersonalPage", 
-            "widgets_nbb", "widgets_ncb", "daily_checkin", 
-            "revenue_center", "business_info", "payment_info"
-        ];
-        killList.forEach(k => delete obj.data[k]);
-        
-        // 強制清空側邊欄所有自定義配置
-        if (obj.data.sideConfigHomepage) obj.data.sideConfigHomepage = [];
-        if (obj.data.sideConfigPersonalPage) obj.data.sideConfigPersonalPage = [];
-    }
-}
-
-// --- 5. 屏蔽開屏廣告 ---
+// --- 5. 开屏广告与启动追踪 ---
 else if (url.includes("/splash_config")) {
     if (obj.data?.ads_groups) obj.data.ads_groups = [];
 }
