@@ -1,32 +1,67 @@
 /*
-小红书 极限只读模式（最终版）
-- 保留：刷、看评论、点开笔记、视频点击加载
-- 禁止：点赞 / 评论 / 收藏 / 关注 / 发布 / 上传 / 日志上报
-- 优化：去广告 / 去推荐干扰 / 搜索净化 / 无水印 / 禁视频预加载
+小红书 极限只读模式（终版）
+- 仅保留：浏览 / 搜索 / 查看评论 / 点开笔记
+- 阉割：点赞 / 评论 / 收藏 / 关注 / 发布 / 上传
+- 阉割：日志 / 行为埋点 / 传感器 / AB / APM
+- 去广告 / 去推荐 / 禁视频预加载 / 无水印
 */
 
 const url = $request.url;
 
 // =========================
-// 1. request 阶段：拦截所有“写操作 / 上传 / 上报”
+// 1. request 阶段：彻底拦截日志 / 行为 / 传感器
 // =========================
+if (/(log|track|apm|metrics|analytics|monitor|sensor|behavior|event|collect)/i.test(url)) {
+    $done({ response: { status: 200, body: "" } });
+    return;
+}
+
+// 所有写操作一律空响应
 if ($request.method !== "GET") {
-    if (/(like|dislike|favorite|collect|comment|publish|post|delete|follow|unfollow|upload|report|log|track|apm)/i.test(url)) {
-        $done({ response: { status: 200, body: "" } });
-        return;
-    }
+    $done({ response: { status: 200, body: "" } });
+    return;
 }
 
 // =========================
 // 2. response 阶段
 // =========================
-if (!$response.body) $done({});
-let obj = JSON.parse($response.body);
+if (!$response.body) {
+    $done({});
+    return;
+}
+
+let obj;
+try {
+    obj = JSON.parse($response.body);
+} catch (e) {
+    $done({});
+    return;
+}
+
+// =========================
+// 通用：深度删除埋点 / 追踪 / 行为字段
+// =========================
+function stripTrack(o) {
+    if (!o || typeof o !== "object") return;
+    for (const k in o) {
+        if (
+            /track|log|apm|metric|event|behavior|sensor|trace|click|exposure/i.test(k)
+        ) {
+            delete o[k];
+        } else if (typeof o[k] === "object") {
+            stripTrack(o[k]);
+        }
+    }
+}
 
 // -------------------------
-// 2.1 配置净化（去 AB / 日志 / AI）
+// 2.1 系统配置净化
 // -------------------------
-if (url.includes("/system_service/config") || url.includes("/v2/system_service/widgets") || url.includes("/interaction/config")) {
+if (
+    url.includes("/system_service/config") ||
+    url.includes("/v2/system_service/widgets") ||
+    url.includes("/interaction/config")
+) {
     const trash = [
         "app_theme","loading_img","splash","store",
         "sideConfigHomepage","sideConfigPersonalPage",
@@ -36,13 +71,13 @@ if (url.includes("/system_service/config") || url.includes("/v2/system_service/w
     ];
     if (obj.data) {
         trash.forEach(k => delete obj.data[k]);
-        if (obj.data.sideConfigHomepage) obj.data.sideConfigHomepage = [];
-        if (obj.data.sideConfigPersonalPage) obj.data.sideConfigPersonalPage = [];
+        obj.data.sideConfigHomepage = [];
+        obj.data.sideConfigPersonalPage = [];
     }
 }
 
 // -------------------------
-// 2.2 搜索页净化（无热搜 / 无 AI）
+// 2.2 搜索页净化
 // -------------------------
 else if (
     url.includes("/search/hot_list") ||
@@ -65,8 +100,7 @@ else if (
 }
 
 // -------------------------
-// 2.3 feed（首页 / 搜索流）处理
-// 核心：去广告 + 禁视频预加载 + 弱化推荐
+// 2.3 首页 / 搜索 feed
 // -------------------------
 else if (url.includes("/homefeed") || url.includes("/search/notes")) {
     if (obj.data?.items) {
@@ -78,12 +112,11 @@ else if (url.includes("/homefeed") || url.includes("/search/notes")) {
                 i.model_type === "live_v2" ||
                 i.note_attributes?.includes("goods");
 
-            // 去推荐标签
             if (i.recommend_reason && i.recommend_reason !== "friend_post") {
                 i.recommend_reason = "";
             }
 
-            // === 核心：禁止视频预加载 ===
+            // 禁视频预加载
             if (i.note_card?.video) delete i.note_card.video;
             if (i.video) delete i.video;
 
@@ -93,7 +126,7 @@ else if (url.includes("/homefeed") || url.includes("/search/notes")) {
 }
 
 // -------------------------
-// 2.4 笔记流（imagefeed / videofeed）
+// 2.4 笔记流
 // -------------------------
 else if (
     url.includes("/note/feed") ||
@@ -118,14 +151,14 @@ else if (
             };
         }
 
-        // 去广告 & 追踪
+        // 去广告 / 商品 / 追踪
         delete item.ads_info;
         delete item.common_ad_info;
         delete item.related_goods_info;
         delete item.is_ads;
         delete item.track_id;
 
-        // 禁止 feed 视频加载
+        // 禁视频预加载
         if (item.video) delete item.video;
         if (item.note_card?.video) delete item.note_card.video;
     });
@@ -138,5 +171,7 @@ else if (url.includes("/splash_config")) {
     if (obj.data?.ads_groups) obj.data.ads_groups = [];
 }
 
-// =========================
+// 最后一刀：深度清洗
+stripTrack(obj);
+
 $done({ body: JSON.stringify(obj) });
