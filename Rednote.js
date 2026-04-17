@@ -22,8 +22,8 @@ if (obj.data?.preload_config) {
 if (obj.data?.device_info || obj.data?.system_info) {
   const info = obj.data.device_info || obj.data.system_info;
   info.device_name = "iPhone";
-  info.storage_free = "512GB";
-  info.storage_total = "1024GB"; // 稍微报低一点，避免被标记
+  info.storage_free = "64GB";
+  info.storage_total = "128GB"; // 稍微报低一点，避免被标记
   delete info.idfa;
   delete info.idfv;
   delete info.uuid;
