@@ -1,177 +1,118 @@
 /*
-小红书 极限只读模式（终版）
-- 仅保留：浏览 / 搜索 / 查看评论 / 点开笔记
-- 阉割：点赞 / 评论 / 收藏 / 关注 / 发布 / 上传
-- 阉割：日志 / 行为埋点 / 传感器 / AB / APM
-- 去广告 / 去推荐 / 禁视频预加载 / 无水印
+* RedNote (海外版) 终极隐私纯净增强脚本
+* 整合功能：去广告、去水印、禁止预加载缓存、设备指纹脱敏、地理位置致盲
 */
 
 const url = $request.url;
+if (!$response.body) $done({});
+let obj = JSON.parse($response.body);
 
-// =========================
-// 1. request 阶段：彻底拦截日志 / 行为 / 传感器
-// =========================
-if (/(log|track|apm|metrics|analytics|monitor|sensor|behavior|event|collect)/i.test(url)) {
-    $done({ response: { status: 200, body: "" } });
-    return;
+// ================= 1. 隐私与缓存控制模块 (狠人模式) =================
+
+// 彻底禁止预加载，防止 App 在后台疯狂下载图片和视频占用 2TB 空间
+if (obj.data?.preload_config) {
+  obj.data.preload_config = {
+    "is_preload": false,
+    "note_preload_count": 0,
+    "preload_interval": 999999
+  };
 }
 
-// 所有写操作一律空响应
-if ($request.method !== "GET") {
-    $done({ response: { status: 200, body: "" } });
-    return;
+// 设备信息模糊化：不让它识别出你是顶配 iPhone 17 Pro Max
+if (obj.data?.device_info || obj.data?.system_info) {
+  const info = obj.data.device_info || obj.data.system_info;
+  info.device_name = "iPhone";
+  info.storage_free = "512GB";
+  info.storage_total = "1024GB"; // 稍微报低一点，避免被标记
+  delete info.idfa;
+  delete info.idfv;
+  delete info.uuid;
 }
 
-// =========================
-// 2. response 阶段
-// =========================
-if (!$response.body) {
-    $done({});
-    return;
+// 屏蔽地理位置（针对曼谷本地隐私保护）
+if (url.includes("/location") || url.includes("/nearby")) {
+  obj.data = {};
+  obj.success = true;
+  obj.msg = "Privacy Shield Active";
 }
 
-let obj;
-try {
-    obj = JSON.parse($response.body);
-} catch (e) {
-    $done({});
-    return;
+// 强制关闭隐私追踪开关
+if (obj.data?.privacy_config) {
+  for (let key in obj.data.privacy_config) {
+    if (key.includes("ads") || key.includes("track") || key.includes("recommend")) {
+      obj.data.privacy_config[key] = false; // 2 或 false
+    }
+  }
 }
 
-// =========================
-// 通用：深度删除埋点 / 追踪 / 行为字段
-// =========================
-function stripTrack(o) {
-    if (!o || typeof o !== "object") return;
-    for (const k in o) {
-        if (
-            /track|log|apm|metric|event|behavior|sensor|trace|click|exposure/i.test(k)
-        ) {
-            delete o[k];
-        } else if (typeof o[k] === "object") {
-            stripTrack(o[k]);
+// ================= 2. 核心去广告与去水印模块 =================
+
+if (url.includes("/v1/note/imagefeed") || url.includes("/v2/note/feed") || url.includes("/v3/note/videofeed") || url.includes("/v4/note/videofeed")) {
+  // 处理信息流广告与水印
+  if (obj.data) {
+    let list = Array.isArray(obj.data) ? obj.data : obj.data[0]?.note_list;
+    if (list?.length > 0) {
+      let filteredList = [];
+      for (let item of list) {
+        // 剔除广告、带货、直播
+        if (item.ads_info || item.card_icon || item.model_type === "live_v2" || item.ad) {
+          continue;
         }
-    }
-}
-
-// -------------------------
-// 2.1 系统配置净化
-// -------------------------
-if (
-    url.includes("/system_service/config") ||
-    url.includes("/v2/system_service/widgets") ||
-    url.includes("/interaction/config")
-) {
-    const trash = [
-        "app_theme","loading_img","splash","store",
-        "sideConfigHomepage","sideConfigPersonalPage",
-        "widgets_nbb","widgets_ncb","daily_checkin",
-        "revenue_center","ai_helper_config","search_ai_entry",
-        "audit_info","event_logging","ab_test_config","apm_config"
-    ];
-    if (obj.data) {
-        trash.forEach(k => delete obj.data[k]);
-        obj.data.sideConfigHomepage = [];
-        obj.data.sideConfigPersonalPage = [];
-    }
-}
-
-// -------------------------
-// 2.2 搜索页净化
-// -------------------------
-else if (
-    url.includes("/search/hot_list") ||
-    url.includes("/search/trending") ||
-    url.includes("/v4/search/hint") ||
-    url.includes("/search/banner_list") ||
-    url.includes("/v1/search/intervene")
-) {
-    obj.data = {
-        items: [],
-        history: [],
-        hot_queries: [],
-        hint_words: [],
-        queries: [],
-        ai_search_info: {},
-        search_intervene: {},
-        floating_button: {},
-        banner_list: []
-    };
-}
-
-// -------------------------
-// 2.3 首页 / 搜索 feed
-// -------------------------
-else if (url.includes("/homefeed") || url.includes("/search/notes")) {
-    if (obj.data?.items) {
-        obj.data.items = obj.data.items.filter(i => {
-            const isAd =
-                i.ads_info ||
-                i.is_ads ||
-                i.card_icon ||
-                i.model_type === "live_v2" ||
-                i.note_attributes?.includes("goods");
-
-            if (i.recommend_reason && i.recommend_reason !== "friend_post") {
-                i.recommend_reason = "";
-            }
-
-            // 禁视频预加载
-            if (i.note_card?.video) delete i.note_card.video;
-            if (i.video) delete i.video;
-
-            return !isAd;
-        });
-    }
-}
-
-// -------------------------
-// 2.4 笔记流
-// -------------------------
-else if (
-    url.includes("/note/feed") ||
-    url.includes("/note/imagefeed") ||
-    url.includes("/note/videofeed")
-) {
-    let items = [];
-
-    if (Array.isArray(obj.data)) items = obj.data;
-    else if (obj.data?.items) items = obj.data.items;
-    else if (obj.data?.note_list) items = obj.data.note_list;
-
-    items.forEach(item => {
-        if (!item || typeof item !== "object") return;
-
-        // 无水印保存
+        // 开启无水印保存权限
         if (item.media_save_config) {
-            item.media_save_config = {
-                disable_save: false,
-                disable_watermark: true,
-                disable_weibo_cover: true
-            };
+          item.media_save_config.disable_save = false;
+          item.media_save_config.disable_watermark = true;
         }
-
-        // 去广告 / 商品 / 追踪
-        delete item.ads_info;
-        delete item.common_ad_info;
-        delete item.related_goods_info;
-        delete item.is_ads;
-        delete item.track_id;
-
-        // 禁视频预加载
-        if (item.video) delete item.video;
-        if (item.note_card?.video) delete item.note_card.video;
-    });
+        // 强制开启下载按钮
+        if (item.share_info?.function_entries) {
+          if (!item.share_info.function_entries.some(e => e.type === "video_download")) {
+            item.share_info.function_entries.unshift({ type: "video_download" });
+          }
+        }
+        filteredList.push(item);
+      }
+      if (Array.isArray(obj.data)) obj.data = filteredList;
+      else obj.data[0].note_list = filteredList;
+    }
+  }
+} else if (url.includes("/v6/homefeed")) {
+  // 首页精选去广告
+  if (obj.data?.length > 0) {
+    obj.data = obj.data.filter(item => 
+      !item.ads_info && 
+      !item.card_icon && 
+      item.model_type !== "live_v2" && 
+      !item.note_attributes?.includes("goods")
+    );
+  }
+} else if (url.includes("/v2/system_service/splash_config")) {
+  // 开屏广告劫持（设定到 2090 年）
+  if (obj.data?.ads_groups?.length > 0) {
+    for (let group of obj.data.ads_groups) {
+      group.start_time = 3818332800;
+      group.end_time = 3818419199;
+      group.ads?.forEach(ad => {
+        ad.start_time = 3818332800;
+        ad.end_time = 3818419199;
+      });
+    }
+  }
+} else if (url.includes("/v1/system_service/config") || url.includes("/v2/note/widgets")) {
+  // 清理 UI 冗余：皮肤、加载图、详情页小部件
+  const junkFields = ["app_theme", "loading_img", "splash", "store", "cooperate_binds", "widgets_nbb"];
+  if (obj.data) {
+    junkFields.forEach(field => delete obj.data[field]);
+  }
 }
 
-// -------------------------
-// 2.5 开屏广告
-// -------------------------
-else if (url.includes("/splash_config")) {
-    if (obj.data?.ads_groups) obj.data.ads_groups = [];
+// ================= 3. 评论区实况照片处理 =================
+if (url.includes("/v5/note/comment/list")) {
+  if (obj.data?.comments?.length > 0) {
+    for (let comment of obj.data.comments) {
+      if (comment.comment_type === 3) comment.comment_type = 2; // 表情包转图片
+      // 这里可以添加更多评论区过滤逻辑
+    }
+  }
 }
-
-// 最后一刀：深度清洗
-stripTrack(obj);
 
 $done({ body: JSON.stringify(obj) });
