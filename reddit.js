@@ -1,9 +1,11 @@
 /***********************************************
-> 应用名称：Reddit 全方位精准去广告脚本（极致纯净版）
+> 应用名称：Reddit 四合一纯净去广告脚本
 > 脚本功能：
-  1. 精准清洗信息流列表广告（Promoted / AdPost）
-  2. 深度过滤点击进入帖子后的详情页与评论区广告
-  3. 0多余功能，不干扰换图标，不锁定/不干涉 NSFW (18+) 原生设置
+  1. ✓ 去面板广告（通过 Operation-Name 快捷拦截）
+  2. ✓ 去推广帖 / 信息流广告（Promoted / AdPost）
+  3. ✓ 去评论广告 / 帖子内潜伏广告
+  4. ✓ 关闭广告个性化（Ad Personalization 强行关闭）
+> 额外特性：零多余功能，绝对不碰、不锁死 NSFW (18+) 设置
 > 适配系统：Surge, Quantumult X, Loon
 > 仓库路径：https://github.com/idnotknowwhyneedname/MyScripts/blob/main/reddit.js
 > 更新时间：2026-06-04
@@ -12,27 +14,36 @@
 const opName = $request?.headers?.['X-Reddit-Operation-Name'] || $request?.headers?.['x-reddit-operation-name'] || '';
 let body = $response.body;
 
-// 1. 快捷通断：如果是纯广告流请求，直接返回空对象拦截
+// 1. 【✓ 去面板广告】：如果操作名称直接包含 Ads，判定 100% 为纯广告数据流，直接拦截
 if (/Ads/i.test(opName)) {
     $done({ body: '{}' });
 } else if (!body) {
     $done({});
 } else {
     try {
+        // 2. 【✓ 关闭广告个性化】：在文本层面直接干掉广告追踪和第三方广告个性化许可
+        if (body.includes('"isAdPersonalizationAllowed":true')) {
+            body = body.replace(/"isAdPersonalizationAllowed":true/g, '"isAdPersonalizationAllowed":false');
+        }
+        if (body.includes('"isThirdPartyInfoAdPersonalizationAllowed":true')) {
+            body = body.replace(/"isThirdPartyInfoAdPersonalizationAllowed":true/g, '"isThirdPartyInfoAdPersonalizationAllowed":false');
+        }
+
         let obj = JSON.parse(body);
 
         if (obj.data) {
-            // 遍历所有数据节点进行深度清洗
             Object.keys(obj.data).forEach(key => {
                 let currentData = obj.data[key];
                 if (!currentData) return;
 
-                // 【A. 帖子列表/信息流广告清洗】
+                // 3. 【✓ 去推广帖】：针对首页、频道等帖子列表，过滤掉所有 Promoted 推广帖
                 if (currentData.elements && Array.isArray(currentData.elements.edges)) {
                     currentData.elements.edges = currentData.elements.edges.filter(edge => {
                         const node = edge?.node;
                         if (!node) return true;
+                        // 剔除 AdPost 类型及带有广告载荷的节点
                         if (node.__typename === "AdPost" || node.adPayload !== undefined && node.adPayload !== null) return false;
+                        // 剔除单元流中混入的广告卡片
                         if (Array.isArray(node.cells)) {
                             return !node.cells.some(cell => cell?.__typename?.includes("Ad") || cell?.__typename === "AdMetadataCell");
                         }
@@ -40,8 +51,7 @@ if (/Ads/i.test(opName)) {
                     });
                 }
 
-                // 【B. 帖子详情内部 / 评论区潜伏广告清洗】
-                // 深度扫描新版 GraphQL 数据结构中所有的 edges 数组
+                // 4. 【✓ 去评论广告】：深度清洗点击进入帖子后，评论区和详情页里潜伏的广告
                 if (Array.isArray(currentData.edges)) {
                     currentData.edges = currentData.edges.filter(edge => {
                         const node = edge?.node;
@@ -51,7 +61,6 @@ if (/Ads/i.test(opName)) {
                     });
                 }
 
-                // 深度扫描新版 GraphQL 数据结构中所有的 nodes 数组
                 if (Array.isArray(currentData.nodes)) {
                     currentData.nodes = currentData.nodes.filter(node => {
                         if (!node) return true;
@@ -60,7 +69,7 @@ if (/Ads/i.test(opName)) {
                     });
                 }
 
-                // 清洗帖子底部的推荐或附加关联广告版块 (addSections)
+                // 清洗帖子下方的关联广告/赞助商推荐版块
                 if (currentData.addSections && Array.isArray(currentData.addSections.edges)) {
                     currentData.addSections.edges = currentData.addSections.edges.filter(edge => {
                         const node = edge?.node;
@@ -74,9 +83,9 @@ if (/Ads/i.test(opName)) {
 
         body = JSON.stringify(obj);
     } catch (err) {
-        console.log("Reddit 去广告脚本执行出错: " + err);
+        console.log("Reddit 四合一脚本执行出错: " + err);
     } finally {
-        // 2. 干净返回：绝不包含修改会员、换图标或 NSFW 的任何文本替换代码
+        // 5. 纯净返回：完全没碰 "isNsfw" 字段，NSFW (18+) 开关将完美恢复原生自主控制
         $done({ body });
     }
 }
