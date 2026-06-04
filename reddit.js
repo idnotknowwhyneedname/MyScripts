@@ -15,9 +15,15 @@ if (/Ads/i.test(opName)) {
     $done({});
 } else {
     try {
-        // 1. 在文本层面进行“高级会员伪装”，解锁 App 专属图标，但绝不触碰 NSFW 字段
-        if (body.includes('"isPremiumMember":false')) {
+        // 1. 【强效解锁 Icon】在文本层面同时修改多种可能的会员判定字段（防止旧版 App 或新版 API 字段不一致）
+        if (body.includes('"isPremiumMember"')) {
             body = body.replace(/"isPremiumMember":false/g, '"isPremiumMember":true');
+        }
+        if (body.includes('"isPremium"')) {
+            body = body.replace(/"isPremium":false/g, '"isPremium":true');
+        }
+        if (body.includes('"hasPremium"')) {
+            body = body.replace(/"hasPremium":false/g, '"hasPremium":true');
         }
 
         let obj = JSON.parse(body);
@@ -27,7 +33,7 @@ if (/Ads/i.test(opName)) {
                 let currentData = obj.data[key];
                 if (!currentData) return;
 
-                // 2. 【列表流去广告】针对首页、频道等帖子列表 (feeds / collections)
+                // 2. 【列表流去广告】针对首页、频道等帖子列表
                 if (currentData.elements && Array.isArray(currentData.elements.edges)) {
                     currentData.elements.edges = currentData.elements.edges.filter(edge => {
                         const node = edge?.node;
@@ -40,21 +46,31 @@ if (/Ads/i.test(opName)) {
                     });
                 }
 
-                // 3. 【帖子内去广告】针对点击进入帖子后的详情页及评论区 (Post Details / Comments Section)
+                // 3. 【帖子内去广告】针对点击进入帖子后的详情页、评论区及推荐流
+                // 新版 API 帖子内广告常藏在各种类型的 edges 数组、nodes 数组中，对其进行无差别扫描剔除
+                if (Array.isArray(currentData.edges)) {
+                    currentData.edges = currentData.edges.filter(edge => {
+                        const node = edge?.node;
+                        if (!node) return true;
+                        if (node.__typename === "AdPost" || node.__typename?.includes("Ad") || node.__typename?.includes("Promoted") || node.adPayload) return false;
+                        return true;
+                    });
+                }
+
+                if (Array.isArray(currentData.nodes)) {
+                    currentData.nodes = currentData.nodes.filter(node => {
+                        if (!node) return true;
+                        if (node.__typename === "AdPost" || node.__typename?.includes("Ad") || node.__typename?.includes("Promoted") || node.adPayload) return false;
+                        return true;
+                    });
+                }
+
+                // 清洗可能存在的附加版块 (addSections)
                 if (currentData.addSections && Array.isArray(currentData.addSections.edges)) {
                     currentData.addSections.edges = currentData.addSections.edges.filter(edge => {
                         const node = edge?.node;
                         if (!node) return true;
                         if (node.__typename?.includes("Ad") || node.__typename === "AdPost" || node.adPayload) return false;
-                        return true;
-                    });
-                }
-                
-                if (Array.isArray(currentData.edges)) {
-                    currentData.edges = currentData.edges.filter(edge => {
-                        const node = edge?.node;
-                        if (!node) return true;
-                        if (node.__typename === "AdPost" || node.__typename?.includes("Ad") || node.adPayload) return false;
                         return true;
                     });
                 }
