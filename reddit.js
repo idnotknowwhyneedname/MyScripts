@@ -2,18 +2,24 @@
 > 应用名称：Reddit 精准去广告脚本（纯净自主控制版）
 > 脚本功能：精准过滤 GraphQL 信息流广告，不锁定/不干涉 NSFW (18+) 设置
 > 适配系统：Surge, Quantumult X, Loon
+> 仓库路径：https://github.com/idnotknowwhyneedname/MyScripts/blob/main/reddit.js
 > 更新时间：2026-06-04
 ***********************************************/
 
+// 获取当前 GraphQL 请求的操作名称（Operation Name）
+const opName = $request?.headers?.['X-Reddit-Operation-Name'] || $request?.headers?.['x-reddit-operation-name'] || '';
 let body = $response.body;
 
-if (!body) {
+// 1. 快捷通断：如果请求名称直接包含 Ads（如 GetAdsList），判定 100% 为广告，直接返回空对象
+if (/Ads/i.test(opName)) {
+    $done({ body: '{}' });
+} else if (!body) {
     $done({});
 } else {
     try {
         let obj = JSON.parse(body);
 
-        // 1. 检查是否存在 data 节点
+        // 2. 核心过滤：检查是否存在 data 节点
         if (obj.data) {
             // 遍历所有的一级数据节点（例如各种 feed, postCollection 等）
             Object.keys(obj.data).forEach(key => {
@@ -48,7 +54,7 @@ if (!body) {
             });
         }
 
-        // 2. 将清洗干净的数据重新打包
+        // 3. 将清洗干净的数据重新打包
         body = JSON.stringify(obj);
     } catch (err) {
         console.log("Reddit 去广告脚本执行出错: " + err);
